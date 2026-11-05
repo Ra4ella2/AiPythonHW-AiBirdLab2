@@ -1,0 +1,76 @@
+services:
+
+  rabbitmq:
+    image: rabbitmq:3-management
+
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+
+  ai_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai
+
+    ports:
+      - "8001:8001"
+
+    environment:
+      HF_HOME: /root/.cache/huggingface
+
+    volumes:
+      - E:/HuggingFace:/root/.cache/huggingface
+
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+
+    environment:
+      RABBIT_URL: amqp://guest:guest@rabbitmq/
+      DATABASE_URL: sqlite:///./data/birds.db
+      CSV_FILE: ./data/bird_analysis.csv
+
+    volumes:
+      - ./data:/app/data
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+    restart: on-failure
+
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+
+    ports:
+      - "8000:8000"
+
+    environment:
+      AI_SERVER_URL: http://ai_server:8001/predict
+      RABBIT_URL: amqp://guest:guest@rabbitmq/
+      DATABASE_URL: sqlite:///./data/birds.db
+
+    volumes:
+      - ./data:/app/data
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      ai_server:
+        condition: service_started
+      worker:
+        condition: service_started
+
+    restart: on-failure

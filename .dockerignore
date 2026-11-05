@@ -1,0 +1,13 @@
+.git
+.gitignore
+
+**/__pycache__
+**/*.pyc
+
+.venv/
+
+mobile/node_modules/
+mobile/.expo/
+
+data/*.db
+data/*.csv
