@@ -59,8 +59,14 @@ services:
 
     environment:
       AI_SERVER_URL: http://ai_server:8001/predict
+
       RABBIT_URL: amqp://guest:guest@rabbitmq/
+
       DATABASE_URL: sqlite:///./data/birds.db
+
+      ETH_RPC_URL: http://host.docker.internal:8550
+
+      CONTRACT_ADDRESS: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
 
     volumes:
       - ./data:/app/data
@@ -68,8 +74,10 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+
       ai_server:
         condition: service_started
+
       worker:
         condition: service_started
 

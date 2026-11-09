@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import {
     View,
@@ -8,16 +8,25 @@ import {
     ScrollView,
     StyleSheet,
     TextInput,
-    Alert
+    Alert,
+    Platform,
+    Linking,
+    AppState
 } from 'react-native'
 
 import * as ImagePicker from 'expo-image-picker'
-
 import { fetch } from 'expo/fetch'
 import { File } from 'expo-file-system'
 
 
-const API = 'http://192.168.0.100:8000'
+const PC_IP = '192.168.0.100'
+const API = `http://${PC_IP}:8000`
+
+const CONTRACT_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3'
+
+const CHAIN_ID = 31415;
+
+const PACKAGE_PRICE_WEI = '2000000000000000'
 
 
 type BirdResult = {
@@ -31,6 +40,7 @@ type AnalyzeResult = {
     image_name: string
     best_result: BirdResult
     top_3: BirdResult[]
+    credits_left: number
 }
 
 
@@ -45,23 +55,326 @@ type HistoryItem = {
 
 export default function App() {
 
-    const [image, setImage] =
-        useState<ImagePicker.ImagePickerAsset | null>(null)
+    const [image, setImage] = useState<ImagePicker.ImagePickerAsset | null>(null)
 
-    const [result, setResult] =
-        useState<AnalyzeResult | null>(null)
+    const [result, setResult] = useState<AnalyzeResult | null>(null)
 
-    const [history, setHistory] =
-        useState<HistoryItem[]>([])
+    const [history, setHistory] = useState<HistoryItem[]>([])
 
-    const [search, setSearch] =
-        useState('')
+    const [search, setSearch] = useState('')
 
-    const [stats, setStats] =
-        useState<any>(null)
+    const [stats, setStats] = useState<any>(null)
 
-    const [loading, setLoading] =
-        useState(false)
+    const [loading, setLoading] = useState(false)
+
+    const [walletAddress, setWalletAddress] = useState('')
+
+    const [credits, setCredits] = useState(0)
+
+    const [showPayment, setShowPayment] = useState(false)
+
+    const [paymentLoading, setPaymentLoading] = useState(false)
+
+    useEffect(() => {
+
+        const subscription =
+            AppState.addEventListener(
+                'change',
+                async state => {
+
+                    if (
+                        state === 'active'
+                        &&
+                        walletAddress
+                    ) {
+                        if (showPayment) {
+                            await waitForPayment()
+                        } else {
+                            await refreshCredits()
+                        }
+                    }
+                }
+            )
+
+        return () =>
+            subscription.remove()
+
+    }, [walletAddress, showPayment])
+
+
+    async function connectWallet() {
+
+        if (Platform.OS === 'web') {
+
+            try {
+
+                const ethereum =
+                    (globalThis as any).ethereum
+
+                if (!ethereum) {
+
+                    Alert.alert(
+                        'MetaMask',
+                        'Встановіть розширення MetaMask'
+                    )
+
+                    return
+                }
+
+                const accounts =
+                    await ethereum.request({
+                        method:
+                            'eth_requestAccounts'
+                    })
+
+                const account =
+                    accounts?.[0]
+
+                if (!account) {
+                    return
+                }
+
+                setWalletAddress(account)
+
+                await refreshCredits(account)
+
+            } catch (error) {
+
+                Alert.alert(
+                    'MetaMask',
+                    String(error)
+                )
+            }
+
+            return
+        }
+
+
+        Alert.alert(
+            'MetaMask',
+            'Вкажіть адресу вашого MetaMask у полі нижче'
+        )
+    }
+
+
+    async function refreshCredits(
+        address: string = walletAddress
+    ) {
+
+        if (!address) {
+            return 0
+        }
+
+        try {
+
+            const response =
+                await fetch(
+                    `${API}/credits/${address}`
+                )
+
+            const data =
+                await response.json()
+
+            setCredits(
+                data.credits
+            )
+
+            return data.credits
+
+        } catch (error) {
+
+            console.log(
+                'Credits error:',
+                error
+            )
+
+            return 0
+        }
+    }
+
+
+    async function waitForPayment() {
+
+        if (!walletAddress) {
+            return
+        }
+
+        setPaymentLoading(true)
+
+        try {
+
+            for (
+                let i = 0;
+                i < 20;
+                i++
+            ) {
+
+                const response =
+                    await fetch(
+                        `${API}/payment/check/${walletAddress}`,
+                        {
+                            method:
+                                'POST'
+                        }
+                    )
+
+                if (response.ok) {
+
+                    const data =
+                        await response.json()
+
+                    setCredits(
+                        data.credits
+                    )
+
+                    setShowPayment(false)
+
+                    return
+                }
+
+                await new Promise(
+                    resolve =>
+                        setTimeout(
+                            resolve,
+                            1000
+                        )
+                )
+            }
+
+            await refreshCredits()
+
+        } catch (error) {
+
+            console.log(
+                'Payment check error:',
+                error
+            )
+
+        } finally {
+
+            setPaymentLoading(false)
+        }
+    }
+
+
+
+    async function buyPackage() {
+
+        if (!walletAddress.trim()) {
+
+            Alert.alert(
+                'MetaMask',
+                'Спочатку вкажіть адресу гаманця'
+            )
+
+            return
+        }
+
+
+        if (Platform.OS === 'web') {
+
+            try {
+
+                setPaymentLoading(true)
+
+                const ethereum =
+                    (globalThis as any).ethereum
+
+                if (!ethereum) {
+
+                    Alert.alert(
+                        'MetaMask',
+                        'Розширення MetaMask не знайдено'
+                    )
+
+                    return
+                }
+
+                const chainIdHex =
+                    '0x'
+                    +
+                    CHAIN_ID.toString(16)
+
+                await ethereum.request({
+                    method:
+                        'wallet_switchEthereumChain',
+
+                    params: [{
+                        chainId:
+                            chainIdHex
+                    }]
+                })
+
+                const valueHex =
+                    '0x'
+                    +
+                    BigInt(
+                        PACKAGE_PRICE_WEI
+                    ).toString(16)
+
+                await ethereum.request({
+                    method:
+                        'eth_sendTransaction',
+
+                    params: [{
+                        from:
+                            walletAddress,
+
+                        to:
+                            CONTRACT_ADDRESS,
+
+                        value:
+                            valueHex
+                    }]
+                })
+
+                setPaymentLoading(false)
+
+                await waitForPayment()
+
+            } catch (error) {
+
+                setPaymentLoading(false)
+
+                Alert.alert(
+                    'Помилка оплати',
+                    String(error)
+                )
+            }
+
+            return
+        }
+
+
+        try {
+
+            setPaymentLoading(true)
+
+            const metamaskUrl =
+                `https://link.metamask.io/send/`
+                +
+                `${CONTRACT_ADDRESS}@${CHAIN_ID}`
+                +
+                `?value=${PACKAGE_PRICE_WEI}`
+
+            await Linking.openURL(
+                metamaskUrl
+            )
+
+        } catch (error) {
+
+            setPaymentLoading(false)
+
+            Alert.alert(
+                'MetaMask',
+                String(error)
+            )
+        }
+    }
+
+
+
+
 
 
     async function selectPhoto() {
@@ -85,6 +398,16 @@ export default function App() {
 
     async function analyzePhoto() {
 
+        if (!walletAddress.trim()) {
+
+            Alert.alert(
+                'MetaMask',
+                'Спочатку підключіть або вкажіть гаманець'
+            )
+
+            return
+        }
+
         if (!image) {
 
             Alert.alert(
@@ -95,19 +418,49 @@ export default function App() {
             return
         }
 
+
         setLoading(true)
 
         try {
 
-            const file =
-                new File(image.uri)
-
             const formData =
                 new FormData()
 
+
+            if (Platform.OS === 'web') {
+
+                const imageResponse =
+                    await globalThis.fetch(
+                        image.uri
+                    )
+
+                const blob =
+                    await imageResponse.blob()
+
+                formData.append(
+                    'file',
+                    blob,
+                    image.fileName || 'bird.jpg'
+                )
+            }
+
+            else {
+
+                const file =
+                    new File(
+                        image.uri
+                    )
+
+                formData.append(
+                    'file',
+                    file
+                )
+            }
+
+
             formData.append(
-                'file',
-                file
+                'wallet_address',
+                walletAddress
             )
 
 
@@ -115,10 +468,15 @@ export default function App() {
                 await fetch(
                     `${API}/analyze`,
                     {
-                        method: 'POST',
-                        body: formData,
+                        method:
+                            'POST',
+
+                        body:
+                            formData,
+
                         headers: {
-                            Accept: 'application/json'
+                            Accept:
+                                'application/json'
                         }
                     }
                 )
@@ -126,6 +484,15 @@ export default function App() {
 
             const text =
                 await response.text()
+
+
+            if (response.status === 402) {
+
+                setCredits(0)
+                setShowPayment(true)
+
+                return
+            }
 
 
             if (!response.ok) {
@@ -139,24 +506,33 @@ export default function App() {
             }
 
 
-            const data =
+            const data:
+                AnalyzeResult =
                 JSON.parse(text)
-
 
             setResult(data)
 
-            await loadHistory()
-        }
+            setCredits(
+                data.credits_left
+            )
 
-        catch (error) {
+            setShowPayment(false)
+
+            await loadHistory()
+
+        } catch (error) {
+
+            console.log(
+                'Analyze error:',
+                error
+            )
 
             Alert.alert(
                 'Помилка',
                 String(error)
             )
-        }
 
-        finally {
+        } finally {
 
             setLoading(false)
         }
@@ -176,9 +552,8 @@ export default function App() {
                 await response.json()
 
             setHistory(data)
-        }
 
-        catch {
+        } catch {
 
             Alert.alert(
                 'Помилка',
@@ -208,9 +583,8 @@ export default function App() {
                 await response.json()
 
             setHistory(data)
-        }
 
-        catch {
+        } catch {
 
             Alert.alert(
                 'Помилка',
@@ -220,21 +594,23 @@ export default function App() {
     }
 
 
-    async function deleteBird(id: number) {
+    async function deleteBird(
+        id: number
+    ) {
 
         try {
 
             await fetch(
                 `${API}/birds/${id}`,
                 {
-                    method: 'DELETE'
+                    method:
+                        'DELETE'
                 }
             )
 
             await loadHistory()
-        }
 
-        catch {
+        } catch {
 
             Alert.alert(
                 'Помилка',
@@ -257,9 +633,8 @@ export default function App() {
                 await response.json()
 
             setStats(data)
-        }
 
-        catch {
+        } catch {
 
             Alert.alert(
                 'Помилка',
@@ -277,20 +652,19 @@ export default function App() {
                 await fetch(
                     `${API}/export`,
                     {
-                        method: 'POST'
+                        method:
+                            'POST'
                     }
                 )
 
-            const data =
-                await response.json()
+            const data = await response.json()
 
             Alert.alert(
                 'CSV',
                 `${data.message}\n${data.file}`
             )
-        }
 
-        catch {
+        } catch {
 
             Alert.alert(
                 'Помилка',
@@ -308,18 +682,76 @@ export default function App() {
                 AI BIRD LAB
             </Text>
 
+
+            <View style={styles.block}>
+
+                <Text style={styles.title}>
+                    MetaMask
+                </Text>
+
+
+                {
+                    Platform.OS !== 'web' &&
+
+                    <TextInput
+                        style={styles.input}
+                        placeholder='0x... адреса MetaMask'
+                        placeholderTextColor='#777'
+                        autoCapitalize='none'
+                        autoCorrect={false}
+                        value={walletAddress}
+                        onChangeText={
+                            setWalletAddress
+                        }
+                    />
+                }
+
+
+                {!walletAddress ? (
+
+                    <Button
+                        title={
+                            Platform.OS === 'web'
+                                ? 'ПІДКЛЮЧИТИ METAMASK'
+                                : 'ЯК ПІДКЛЮЧИТИ'
+                        }
+                        onPress={
+                            connectWallet
+                        }
+                    />
+
+                ) : (
+
+                    <>
+                        <Text style={styles.historyText}>
+                            {walletAddress.slice(0, 8)}
+                            ...
+                            {walletAddress.slice(-6)}
+                        </Text>
+
+                        <Text style={styles.historyText}>
+                            Аналізів: {credits}
+                        </Text>
+
+                    </>
+
+                )}
+
+            </View>
+
+
             <View style={styles.block}>
 
                 <Text style={styles.title}>
                     Аналіз фотографії
                 </Text>
 
-
                 <Button
                     title='ОБРАТИ ФОТО'
-                    onPress={selectPhoto}
+                    onPress={
+                        selectPhoto
+                    }
                 />
-
 
                 {
                     image &&
@@ -328,13 +760,13 @@ export default function App() {
                         source={{
                             uri: image.uri
                         }}
-                        style={styles.image}
+                        style={
+                            styles.image
+                        }
                     />
                 }
 
-
                 <View style={styles.space} />
-
 
                 <Button
                     title={
@@ -342,11 +774,48 @@ export default function App() {
                             ? 'АНАЛІЗ...'
                             : 'ПРОАНАЛІЗУВАТИ'
                     }
-                    onPress={analyzePhoto}
-                    disabled={loading}
+                    onPress={
+                        analyzePhoto
+                    }
+                    disabled={
+                        loading
+                    }
                 />
 
             </View>
+
+
+            {
+                showPayment && (
+
+                    <View style={styles.resultBlock}>
+
+                        <Text style={styles.resultTitle}>
+                            Потрібна оплата
+                        </Text>
+
+                        <Text style={styles.resultText}>
+                            5 аналізів — 0.002 ETH
+                        </Text>
+
+                        <Button
+                            title={
+                                paymentLoading
+                                    ? 'ОЧІКУВАННЯ ОПЛАТИ...'
+                                    : 'КУПИТИ 5 АНАЛІЗІВ'
+                            }
+                            onPress={
+                                buyPackage
+                            }
+                            disabled={
+                                paymentLoading
+                            }
+                        />
+
+
+                    </View>
+                )
+            }
 
 
             {
@@ -372,11 +841,14 @@ export default function App() {
                         }%
                     </Text>
 
+                    <Text style={styles.resultText}>
+                        Залишилось аналізів:{' '}
+                        {result.credits_left}
+                    </Text>
 
                     <Text style={styles.resultSubTitle}>
                         TOP 3
                     </Text>
-
 
                     {
                         result.top_3.map(
@@ -410,31 +882,33 @@ export default function App() {
                     Історія
                 </Text>
 
-
                 <Button
                     title='ПОКАЗАТИ ІСТОРІЮ'
-                    onPress={loadHistory}
+                    onPress={
+                        loadHistory
+                    }
                 />
-
 
                 <TextInput
                     style={styles.input}
                     placeholder='Назва птаха'
                     placeholderTextColor='#777'
                     value={search}
-                    onChangeText={setSearch}
+                    onChangeText={
+                        setSearch
+                    }
                 />
-
 
                 <Button
                     title='ПОШУК'
-                    onPress={searchBird}
+                    onPress={
+                        searchBird
+                    }
                 />
-
 
                 {
                     history.map(
-                        (item) => (
+                        item => (
 
                             <View
                                 style={styles.historyItem}
@@ -456,8 +930,8 @@ export default function App() {
 
                                 <Button
                                     title='ВИДАЛИТИ'
-                                    onPress={
-                                        () => deleteBird(item.id)
+                                    onPress={() =>
+                                        deleteBird(item.id)
                                     }
                                 />
 
@@ -476,12 +950,12 @@ export default function App() {
                     Статистика
                 </Text>
 
-
                 <Button
                     title='ПОКАЗАТИ СТАТИСТИКУ'
-                    onPress={loadStatistics}
+                    onPress={
+                        loadStatistics
+                    }
                 />
-
 
                 {
                     stats &&
@@ -491,7 +965,6 @@ export default function App() {
                         <Text style={styles.statsText}>
                             Фото: {stats.total_images}
                         </Text>
-
 
                         {
                             stats.most_common_species &&
@@ -505,7 +978,6 @@ export default function App() {
                                 }
                             </Text>
                         }
-
 
                         {
                             stats.highest_confidence &&
@@ -522,7 +994,6 @@ export default function App() {
                                 }%
                             </Text>
                         }
-
 
                         {
                             stats.lowest_confidence &&
@@ -554,11 +1025,12 @@ export default function App() {
 
                 <Button
                     title='ЕКСПОРТ У CSV'
-                    onPress={exportCSV}
+                    onPress={
+                        exportCSV
+                    }
                 />
 
             </View>
-
 
             <View style={styles.bottom} />
 
@@ -571,121 +1043,132 @@ const styles = StyleSheet.create({
 
     page: {
         flex: 1,
-        backgroundColor: '#171717',
-        padding: 20
+        backgroundColor: '#121212',
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        width: '100%',
+        maxWidth: 1100,
+        alignSelf: 'center'
     },
 
     mainTitle: {
         color: '#fff',
-        fontSize: 30,
+        fontSize: 34,
         fontWeight: 'bold',
         textAlign: 'center',
-        marginTop: 30
-    },
-
-    description: {
-        color: '#888',
-        textAlign: 'center',
-        marginBottom: 20
+        marginTop: 20,
+        marginBottom: 30,
+        letterSpacing: 2
     },
 
     block: {
-        backgroundColor: '#242424',
-        padding: 18,
-        marginBottom: 20,
-        borderRadius: 8
+        backgroundColor: '#202020',
+        padding: 24,
+        marginBottom: 22,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#303030',
+        width: '100%'
     },
 
     title: {
         color: '#fff',
-        fontSize: 20,
+        fontSize: 22,
         fontWeight: 'bold',
-        marginBottom: 15
+        marginBottom: 18
     },
 
     image: {
         width: '100%',
-        height: 280,
+        maxWidth: 700,
+        height: 380,
         resizeMode: 'contain',
-        marginTop: 15,
-        backgroundColor: '#111'
+        marginTop: 20,
+        alignSelf: 'center',
+        backgroundColor: '#111',
+        borderRadius: 12
     },
 
     input: {
         backgroundColor: '#fff',
-        color: '#000',
-        padding: 10,
-        marginTop: 15,
-        marginBottom: 10,
-        borderRadius: 5
+        color: '#111',
+        paddingHorizontal: 15,
+        paddingVertical: 13,
+        marginTop: 12,
+        marginBottom: 12,
+        borderRadius: 8,
+        fontSize: 16
     },
 
     historyItem: {
-        borderBottomWidth: 1,
-        borderBottomColor: '#444',
-        paddingVertical: 12,
-        marginTop: 5
+        backgroundColor: '#292929',
+        borderWidth: 1,
+        borderColor: '#383838',
+        padding: 16,
+        marginTop: 12,
+        borderRadius: 10
     },
 
     historyText: {
         color: '#fff',
-        marginBottom: 5
-    },
-
-    resultBlock: {
-        backgroundColor: '#fff',
-        padding: 18,
-        marginBottom: 20,
-        borderRadius: 8
-    },
-
-    resultTitle: {
-        color: '#000',
-        fontSize: 20,
-        fontWeight: 'bold',
-        marginBottom: 20
-    },
-
-    resultBird: {
-        color: '#000',
-        fontSize: 22,
-        fontWeight: 'bold',
-        marginBottom: 8
-    },
-
-    resultText: {
-        color: '#000',
         fontSize: 16,
         marginBottom: 8
     },
 
-    resultSubTitle: {
-        color: '#000',
-        fontSize: 18,
+    resultBlock: {
+        backgroundColor: '#f5f5f5',
+        padding: 24,
+        marginBottom: 22,
+        borderRadius: 14,
+        width: '100%'
+    },
+
+    resultTitle: {
+        color: '#111',
+        fontSize: 24,
         fontWeight: 'bold',
-        marginTop: 18,
+        marginBottom: 18
+    },
+
+    resultBird: {
+        color: '#111',
+        fontSize: 28,
+        fontWeight: 'bold',
         marginBottom: 10
     },
 
+    resultText: {
+        color: '#222',
+        fontSize: 17,
+        marginBottom: 8
+    },
+
+    resultSubTitle: {
+        color: '#111',
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginTop: 20,
+        marginBottom: 12
+    },
+
     stats: {
-        backgroundColor: '#fff',
-        padding: 15,
-        marginTop: 15,
-        borderRadius: 5,
-        gap: 8
+        backgroundColor: '#f5f5f5',
+        padding: 20,
+        marginTop: 18,
+        borderRadius: 10,
+        gap: 10
     },
 
     statsText: {
-        color: '#000',
-        fontSize: 16
+        color: '#111',
+        fontSize: 17
     },
 
     space: {
-        height: 15
+        height: 18
     },
 
     bottom: {
-        height: 50
+        height: 60
     }
-
 })

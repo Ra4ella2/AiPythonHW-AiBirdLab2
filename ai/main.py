@@ -80,10 +80,7 @@ def health():
 
 
 @app.post("/predict")
-async def predict(
-    file: UploadFile = File(...)
-):
-
+async def predict(file: UploadFile = File(...)):
     filename = (
         file.filename
         or "bird.jpg"

@@ -1,15 +1,14 @@
-from sqlalchemy import (
-    select,
-    func
-)
-
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from backend.models import Bird
+from backend.models import (
+    Bird,
+    WalletCredit,
+    UsedTransaction
+)
 
 
 def bird_to_dict(bird: Bird):
-
     return {
         "id": bird.id,
         "image_name": bird.image_name,
@@ -27,7 +26,6 @@ def create_bird(
     species: str,
     confidence: float
 ):
-
     bird = Bird(
         image_name=image_name,
         predicted_species=species,
@@ -45,10 +43,10 @@ def get_bird(
     db: Session,
     bird_id: int
 ):
-
     return db.scalar(
-        select(Bird)
-        .where(Bird.id == bird_id)
+        select(Bird).where(
+            Bird.id == bird_id
+        )
     )
 
 
@@ -56,7 +54,6 @@ def delete_bird(
     db: Session,
     bird_id: int
 ):
-
     bird = get_bird(
         db,
         bird_id
@@ -71,8 +68,9 @@ def delete_bird(
     return True
 
 
-def get_history(db: Session):
-
+def get_history(
+    db: Session
+):
     birds = db.scalars(
         select(Bird)
         .order_by(Bird.id.desc())
@@ -88,7 +86,6 @@ def search_birds(
     db: Session,
     name: str
 ):
-
     birds = db.scalars(
         select(Bird)
         .where(
@@ -105,8 +102,9 @@ def search_birds(
     ]
 
 
-def get_statistics(db: Session):
-
+def get_statistics(
+    db: Session
+):
     total = db.scalar(
         select(
             func.count(Bird.id)
@@ -117,7 +115,9 @@ def get_statistics(db: Session):
     most_common = db.execute(
         select(
             Bird.predicted_species,
-            func.count(Bird.id).label("count")
+            func.count(Bird.id).label(
+                "count"
+            )
         )
         .group_by(
             Bird.predicted_species
@@ -148,7 +148,6 @@ def get_statistics(db: Session):
 
 
     return {
-
         "total_images": total,
 
         "most_common_species": (
@@ -162,8 +161,11 @@ def get_statistics(db: Session):
 
         "highest_confidence": (
             {
-                "species": highest.predicted_species,
-                "confidence": highest.confidence
+                "species":
+                    highest.predicted_species,
+
+                "confidence":
+                    highest.confidence
             }
             if highest
             else None
@@ -171,10 +173,125 @@ def get_statistics(db: Session):
 
         "lowest_confidence": (
             {
-                "species": lowest.predicted_species,
-                "confidence": lowest.confidence
+                "species":
+                    lowest.predicted_species,
+
+                "confidence":
+                    lowest.confidence
             }
             if lowest
             else None
         )
     }
+
+
+def get_wallet(
+    db: Session,
+    wallet_address: str
+):
+    wallet_address = wallet_address.lower()
+
+    return db.scalar(
+        select(WalletCredit)
+        .where(
+            WalletCredit.wallet_address
+            == wallet_address
+        )
+    )
+
+
+def get_or_create_wallet(
+    db: Session,
+    wallet_address: str
+):
+    wallet_address = wallet_address.lower()
+
+    wallet = get_wallet(
+        db,
+        wallet_address
+    )
+
+    if wallet:
+        return wallet
+
+
+    wallet = WalletCredit(
+        wallet_address=wallet_address,
+        credits=0
+    )
+
+    db.add(wallet)
+    db.commit()
+    db.refresh(wallet)
+
+    return wallet
+
+
+def add_credits(
+    db: Session,
+    wallet_address: str,
+    amount: int
+):
+    wallet = get_or_create_wallet(
+        db,
+        wallet_address
+    )
+
+    wallet.credits += amount
+
+    db.commit()
+    db.refresh(wallet)
+
+    return wallet
+
+
+def remove_credit(
+    db: Session,
+    wallet_address: str
+):
+    wallet = get_or_create_wallet(
+        db,
+        wallet_address
+    )
+
+    if wallet.credits <= 0:
+        return False
+
+
+    wallet.credits -= 1
+
+    db.commit()
+    db.refresh(wallet)
+
+    return True
+
+
+def transaction_used(
+    db: Session,
+    transaction_hash: str
+):
+    transaction = db.scalar(
+        select(UsedTransaction)
+        .where(
+            UsedTransaction.transaction_hash
+            == transaction_hash
+        )
+    )
+
+    return transaction is not None
+
+
+def save_transaction(
+    db: Session,
+    transaction_hash: str,
+    wallet_address: str
+):
+    transaction = UsedTransaction(
+        transaction_hash=transaction_hash,
+        wallet_address=wallet_address.lower()
+    )
+
+    db.add(transaction)
+    db.commit()
+
+    return transaction
