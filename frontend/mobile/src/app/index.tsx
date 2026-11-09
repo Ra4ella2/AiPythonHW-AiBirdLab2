@@ -19,7 +19,7 @@ import { fetch } from 'expo/fetch'
 import { File } from 'expo-file-system'
 
 
-const PC_IP = '192.168.0.100'
+const PC_IP = '192.168.0.103'
 const API = `http://${PC_IP}:8000`
 
 const CONTRACT_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3'
